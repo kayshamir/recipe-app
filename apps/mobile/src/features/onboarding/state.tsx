@@ -75,10 +75,7 @@ export function OnboardingProvider({ children }: PropsWithChildren) {
         error,
         retry: () => void restore(),
         reset: async () => {
-          await Promise.all([
-            Storage.removeItem(completionKey),
-            Storage.removeItem(welcomeKey),
-          ]);
+          await Promise.all([Storage.removeItem(completionKey), Storage.removeItem(welcomeKey)]);
           setCompleted(false);
           setWelcomeCompleted(false);
         },

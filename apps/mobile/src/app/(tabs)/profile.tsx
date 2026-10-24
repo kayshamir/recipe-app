@@ -31,10 +31,7 @@ export default function Profile() {
           else router.push('/sign-in');
         }}
       />
-      <Button
-        label="Replay onboarding"
-        onPress={() => void replayOnboarding()}
-      />
+      <Button label="Replay onboarding" onPress={() => void replayOnboarding()} />
     </Screen>
   );
 }

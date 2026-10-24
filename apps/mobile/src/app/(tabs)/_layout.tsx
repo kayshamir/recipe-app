@@ -43,10 +43,7 @@ export default function TabLayout() {
         options={{
           title: 'Shopping',
           tabBarIcon: ({ color, size }) => (
-            <BagIcon
-              color={typeof color === 'string' ? color : t.color.secondary}
-              size={size}
-            />
+            <BagIcon color={typeof color === 'string' ? color : t.color.secondary} size={size} />
           ),
         }}
       />
