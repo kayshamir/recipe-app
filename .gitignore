@@ -1,0 +1,36 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.expo/
+dist/
+coverage/
+*.log
+.DS_Store
+
+# Generated Expo/native projects and caches
+web-build/
+expo-env.d.ts
+.metro-health-check*
+/apps/mobile/android/
+/apps/mobile/ios/
+*.tsbuildinfo
+
+# Kotlin / Gradle build outputs
+.gradle/
+.kotlin/
+build/
+local.properties
+
+# Signing credentials
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.pem
+*.mobileprovision
+*.orig.*
+
+# Local assistant configuration
+.claude/

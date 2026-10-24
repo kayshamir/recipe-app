@@ -1,0 +1,27 @@
+{
+  "name": "recipe-app",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "packageManager": "npm@11.16.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "mobile": "npm run start --workspace=@recipe-app/mobile",
+    "mobile:lan": "npm run start:lan --workspace=@recipe-app/mobile",
+    "mobile:tunnel": "npm run start:tunnel --workspace=@recipe-app/mobile",
+    "android": "npm run android --workspace=@recipe-app/mobile",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test:ci --workspaces --if-present",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10"
+  }
+}
