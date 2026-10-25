@@ -19,6 +19,8 @@ import { networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gradleWrapperForPlatform, isTcpPortOpen, probeLocalPostgres } from './dev-runtime.mjs';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE = resolve(ROOT, 'apps', 'mobile');
 const API = resolve(ROOT, 'apps', 'api');
@@ -28,6 +30,7 @@ const MOBILE_ENV = resolve(MOBILE, '.env');
 const MOBILE_ENV_EXAMPLE = resolve(MOBILE, '.env.example');
 const API_ENV = resolve(API, '.env');
 const DOCKER_COMPOSE = resolve(ROOT, 'infra', 'docker-compose.yml');
+const GRADLE_WRAPPER = gradleWrapperForPlatform(process.platform);
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 const c = {
@@ -759,7 +762,7 @@ async function startMobile() {
   }
 
   const wantedPort = connection === 'tunnel' ? 8083 : 8082;
-  const portBusy = tryShell(`netstat -ano | findstr ":${wantedPort}" | findstr "LISTENING"`);
+  const portBusy = await isTcpPortOpen(wantedPort);
   preflight.push([
     portBusy ? warn(`Port ${wantedPort}`) : ok(`Port ${wantedPort}`),
     portBusy
@@ -808,12 +811,33 @@ async function startMobile() {
 // ── ENSURE POSTGRES ──────────────────────────────────────────────────────────
 // Reuse-or-start local Postgres (pgvector). Shared by the full-stack launcher
 // and the backend-only path so a solo `./gradlew run` can be DB-ready in one
-// step. Returns true when a database is reachable (already running or just
-// started); false when the user declines or Docker is unavailable.
+// step. Returns true only when the expected local database authenticates;
+// false when setup is skipped, unavailable, or a conflicting server owns 5432.
 async function ensurePostgres(s) {
-  if (tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"')) {
-    console.log(`  ${ok('Postgres already listening on :5432 — reusing it.')}`);
-    return true;
+  if (await isTcpPortOpen(5432)) {
+    const probe = probeLocalPostgres();
+    if (probe === 'ready') {
+      console.log(`  ${ok('Postgres ready on :5432 (db recipe_dev, user recipe).')}`);
+      return true;
+    }
+    if (probe === 'client-missing') {
+      console.log(
+        `  ${warn('Something is listening on :5432, but psql is unavailable to verify its credentials.')}`,
+      );
+      return false;
+    }
+    if (probe === 'credentials-rejected' || probe === 'configuration-rejected') {
+      console.log(`  ${fail('Port 5432 is occupied by a different or incompatible PostgreSQL.')}`);
+      console.log(
+        `    ${dim('The server there rejected recipe / recipe_dev; Docker recipe-pg was not selected by localhost.')}`,
+      );
+      console.log(
+        `    ${dim('Stop the conflicting PostgreSQL service, or point DATABASE_URL at a different port.')}`,
+      );
+      return false;
+    }
+    console.log(`  ${fail('Port 5432 is open, but the expected recipe database is unreachable.')}`);
+    return false;
   }
   if (!s.dockerInstalled) {
     console.log(
@@ -833,14 +857,37 @@ async function ensurePostgres(s) {
   const cmd = exists
     ? 'docker start recipe-pg'
     : 'docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 pgvector/pgvector:pg16';
-  await run(cmd).catch(() => {});
-  console.log(`  ${ok('Postgres up on localhost:5432 (db recipe_dev, user/pass recipe).')}`);
-  return true;
+  await run(cmd);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await isTcpPortOpen(5432)) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+
+  const probe = probeLocalPostgres();
+  if (probe === 'ready') {
+    console.log(`  ${ok('Postgres up on localhost:5432 (db recipe_dev, user/pass recipe).')}`);
+    return true;
+  }
+  if (probe === 'client-missing' && (await isTcpPortOpen(5432))) {
+    console.log(
+      `  ${warn('Postgres is listening on :5432; install psql to let the wizard verify credentials.')}`,
+    );
+    return false;
+  }
+
+  console.log(
+    `  ${fail('recipe-pg started, but localhost:5432 did not accept recipe credentials.')}`,
+  );
+  console.log(`    ${dim('Check for another PostgreSQL service already using port 5432.')}`);
+  return false;
 }
 
 // ── START BACKEND API ────────────────────────────────────────────────────────
 async function startBackend() {
   const s = workspaceStatus();
+  const postgresPortOpen = await isTcpPortOpen(5432);
+  const postgresReady = postgresPortOpen && probeLocalPostgres() === 'ready';
   section('Backend API — Kotlin / Ktor');
 
   if (!s.apiHasSrc) {
@@ -860,7 +907,7 @@ async function startBackend() {
   // wrapper is checked by file presence (a global `gradle` is never needed).
   // Docker / Postgres are OPTIONAL — without them the API boots and DB routes
   // return 503 (graceful degradation), so they must never block the run.
-  const hasWrapper = existsSync(resolve(API, 'gradlew.bat')) || existsSync(resolve(API, 'gradlew'));
+  const hasWrapper = existsSync(resolve(API, GRADLE_WRAPPER));
 
   const required = [
     {
@@ -881,8 +928,8 @@ async function startBackend() {
       hint: 'Optional — without a DB, /healthz and /api/v1/recipes return 503',
     },
     {
-      label: 'Postgres running on :5432',
-      installed: !!tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"'),
+      label: 'Recipe Postgres ready on :5432',
+      installed: postgresReady,
       hint: 'Optional — start it via "Local infrastructure (Docker)" or the full-stack launcher',
     },
   ];
@@ -902,13 +949,11 @@ async function startBackend() {
     return;
   }
 
-  // A solo backend run can be DB-ready in one step: if nothing is listening on
-  // :5432, offer to start Postgres — the same reuse-or-start logic the
-  // full-stack launcher uses, so both paths behave identically.
-  if (!tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"')) {
-    console.log('');
-    await ensurePostgres(s);
-  }
+  // A solo backend run can be DB-ready in one step. This also verifies that an
+  // existing :5432 listener accepts the expected local credentials instead of
+  // assuming any process on that port is recipe-pg.
+  console.log('');
+  await ensurePostgres(s);
 
   console.log('');
   const what = await select({
@@ -956,13 +1001,13 @@ async function startBackend() {
     // ("Storage … source-to-classes.tab is already registered"), which then
     // surfaces as bogus "unresolved reference" errors. Precompiling once means
     // both start up-to-date and only the watcher recompiles on later edits.
-    await run('gradlew.bat classes', { cwd: API });
+    await run(`${GRADLE_WRAPPER} classes`, { cwd: API });
     console.log('');
     await runConcurrent([
-      { name: 'api', command: 'gradlew.bat run', cwd: API, color: c.blue },
+      { name: 'api', command: `${GRADLE_WRAPPER} run`, cwd: API, color: c.blue },
       {
         name: 'watch',
-        command: 'gradlew.bat -t classes',
+        command: `${GRADLE_WRAPPER} -t classes`,
         cwd: API,
         color: c.cyan,
         delayMs: 8000,
@@ -974,7 +1019,7 @@ async function startBackend() {
 
   const gradleCmd = what === 'gradle-run' ? ['run'] : ['test'];
   console.log(`\n${info(`Running: ./gradlew ${gradleCmd.join(' ')}`)}\n`);
-  await run(`gradlew.bat ${gradleCmd.join(' ')}`, { cwd: API });
+  await run(`${GRADLE_WRAPPER} ${gradleCmd.join(' ')}`, { cwd: API });
 }
 
 // ── FULL STACK: backend + mobile together ────────────────────────────────────
@@ -1066,12 +1111,18 @@ async function startFullStack() {
   // watcher from running compileKotlin concurrently (two Kotlin daemons on one
   // incremental cache crash each other). After this both start up-to-date.
   console.log(`\n  ${info('Preparing backend build (one-shot)…')}`);
-  await run('gradlew.bat classes', { cwd: API });
+  await run(`${GRADLE_WRAPPER} classes`, { cwd: API });
 
   console.log('');
   await runConcurrent([
-    { name: 'api', command: 'gradlew.bat run', cwd: API, color: c.blue },
-    { name: 'watch', command: 'gradlew.bat -t classes', cwd: API, color: c.cyan, delayMs: 8000 },
+    { name: 'api', command: `${GRADLE_WRAPPER} run`, cwd: API, color: c.blue },
+    {
+      name: 'watch',
+      command: `${GRADLE_WRAPPER} -t classes`,
+      cwd: API,
+      color: c.cyan,
+      delayMs: 8000,
+    },
     { name: 'metro', command: `npm run ${mobileScript}`, cwd: ROOT, color: c.magenta },
   ]);
   console.log(`\n  ${ok('Full stack stopped.')}\n`);
