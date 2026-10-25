@@ -805,6 +805,39 @@ async function startMobile() {
   await run(`npm run ${script}`);
 }
 
+// ── ENSURE POSTGRES ──────────────────────────────────────────────────────────
+// Reuse-or-start local Postgres (pgvector). Shared by the full-stack launcher
+// and the backend-only path so a solo `./gradlew run` can be DB-ready in one
+// step. Returns true when a database is reachable (already running or just
+// started); false when the user declines or Docker is unavailable.
+async function ensurePostgres(s) {
+  if (tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"')) {
+    console.log(`  ${ok('Postgres already listening on :5432 — reusing it.')}`);
+    return true;
+  }
+  if (!s.dockerInstalled) {
+    console.log(
+      `  ${warn('Docker not installed — start Postgres yourself, else the API runs degraded.')}`,
+    );
+    return false;
+  }
+  const start = await confirm({
+    message: 'Start Postgres (pgvector) via Docker now?',
+    default: true,
+  });
+  if (!start) {
+    console.log(`  ${warn('Skipping Postgres — the API starts but DB-backed routes return 503.')}`);
+    return false;
+  }
+  const exists = (tryShell('docker ps -a --format "{{.Names}}"') ?? '').includes('recipe-pg');
+  const cmd = exists
+    ? 'docker start recipe-pg'
+    : 'docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 pgvector/pgvector:pg16';
+  await run(cmd).catch(() => {});
+  console.log(`  ${ok('Postgres up on localhost:5432 (db recipe_dev, user/pass recipe).')}`);
+  return true;
+}
+
 // ── START BACKEND API ────────────────────────────────────────────────────────
 async function startBackend() {
   const s = workspaceStatus();
@@ -868,10 +901,14 @@ async function startBackend() {
     console.log(`\n${warn('Missing a required tool. Resolve the ✘ items above, then retry.')}`);
     return;
   }
-  if (!optional.every((p) => p.installed))
-    console.log(
-      `\n  ${dim('Heads-up: no database yet — the API will run, but DB-backed routes return 503.')}`,
-    );
+
+  // A solo backend run can be DB-ready in one step: if nothing is listening on
+  // :5432, offer to start Postgres — the same reuse-or-start logic the
+  // full-stack launcher uses, so both paths behave identically.
+  if (!tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"')) {
+    console.log('');
+    await ensurePostgres(s);
+  }
 
   console.log('');
   const what = await select({
@@ -954,36 +991,9 @@ async function startFullStack() {
   }
 
   // 1) Database — reuse a running Postgres if present, else start one.
-  const port5432 = tryShell('netstat -ano | findstr ":5432" | findstr "LISTENING"');
-  const pgRunning = (tryShell('docker ps --format "{{.Names}}"') ?? '').includes('recipe-pg');
-  let dbReady = false;
-  if (port5432) {
-    console.log(`  ${ok('Postgres already listening on :5432 — reusing it.')}`);
-    dbReady = true;
-  } else if (s.dockerInstalled) {
-    const start = await confirm({
-      message: 'Start Postgres (pgvector) via Docker now?',
-      default: true,
-    });
-    if (start) {
-      const exists = (tryShell('docker ps -a --format "{{.Names}}"') ?? '').includes('recipe-pg');
-      const cmd = exists
-        ? 'docker start recipe-pg'
-        : 'docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 pgvector/pgvector:pg16';
-      await run(cmd).catch(() => {});
-      console.log(`  ${ok('Postgres up on localhost:5432 (db recipe_dev, user/pass recipe).')}`);
-      dbReady = true;
-    } else {
-      console.log(
-        `  ${warn('Skipping Postgres — the API starts but DB-backed routes return 503.')}`,
-      );
-    }
-  } else {
-    console.log(
-      `  ${warn('Docker not installed — start Postgres yourself, else the API runs degraded.')}`,
-    );
-  }
-  void pgRunning;
+  //    Shared with the backend-only launcher (ensurePostgres) so both behave
+  //    identically: re-check :5432, offer to start recipe-pg, report honestly.
+  const dbReady = await ensurePostgres(s);
 
   // 2) API env file — create from the example if missing.
   const apiExample = resolve(API, '.env.example');
