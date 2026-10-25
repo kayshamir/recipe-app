@@ -12,12 +12,12 @@
  * https://github.com/sboudrias/inquirer.js
  */
 
+import { checkbox, confirm, input, select } from '@inquirer/prompts';
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, copyFileSync } from 'node:fs';
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
-import { resolve, dirname } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { select, confirm, input, checkbox } from '@inquirer/prompts';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE = resolve(ROOT, 'apps', 'mobile');
