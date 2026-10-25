@@ -11,6 +11,7 @@ this codebase using Laravel concepts as the reference frame.
 - [Ktor Documentation](https://ktor.io/docs/home.html)
 - [ARCHITECTURE.md](../../ARCHITECTURE.md) — stack decisions
 - [DESIGN_SYSTEM.md](../../DESIGN_SYSTEM.md) / [PRD.md](../../PRD.md)
+- [SETUP-03.md](./SETUP-03.md) — PostgreSQL + pgvector setup and verification
 
 ---
 
@@ -81,8 +82,12 @@ Settings come from two places (secrets never committed):
   probes for real and logs `Database reachable` or a warning; `/healthz` is the
   authoritative check.
 - **Postgres** runs via [`infra/docker-compose.yml`](../../infra/docker-compose.yml)
-  (`pgvector/pgvector:pg16`, container `recipe-pg`, credentials matching the
-  defaults above; `vector` extension enabled by an init script).
+  (`pgvector/pgvector:0.8.7-pg16`, container `recipe-pg`, credentials matching
+  the defaults above). Flyway installs and verifies the `vector` extension;
+  Docker initialization scripts do not own schema.
+- **Vector storage** uses immutable knowledge-document versions and a
+  server-owned Ollama `nomic-embed-text` profile with 768-dimensional cosine
+  embeddings. See [SETUP-03.md](./SETUP-03.md) for the schema and smoke test.
 
 ---
 

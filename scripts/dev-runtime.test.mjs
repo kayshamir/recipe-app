@@ -2,7 +2,18 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import test from 'node:test';
 
-import { classifyPostgresProbe, gradleWrapperForPlatform, isTcpPortOpen } from './dev-runtime.mjs';
+import {
+  classifyPostgresProbe,
+  gradleWrapperForPlatform,
+  isTcpPortOpen,
+  PGVECTOR_IMAGE,
+  POSTGRES_COMPOSE_SERVICE,
+} from './dev-runtime.mjs';
+
+test('uses the reproducible PostgreSQL service configuration', () => {
+  assert.equal(POSTGRES_COMPOSE_SERVICE, 'db');
+  assert.equal(PGVECTOR_IMAGE, 'pgvector/pgvector:0.8.7-pg16');
+});
 
 test('uses the Gradle wrapper for the current shell platform', () => {
   assert.equal(gradleWrapperForPlatform('win32'), 'gradlew.bat');

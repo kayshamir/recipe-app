@@ -19,7 +19,13 @@ import { networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { gradleWrapperForPlatform, isTcpPortOpen, probeLocalPostgres } from './dev-runtime.mjs';
+import {
+  gradleWrapperForPlatform,
+  isTcpPortOpen,
+  PGVECTOR_IMAGE,
+  POSTGRES_COMPOSE_SERVICE,
+  probeLocalPostgres,
+} from './dev-runtime.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE = resolve(ROOT, 'apps', 'mobile');
@@ -386,7 +392,7 @@ async function aboutArch() {
     ],
     [
       'infra/docker-compose.yml',
-      'Postgres+pgvector · Ollama · SearXNG · Caddy',
+      'PostgreSQL 16 + pgvector 0.8.7',
       s.hasDockerCompose ? 'active' : 'planned',
       'SETUP-03',
     ],
@@ -424,7 +430,7 @@ async function aboutArch() {
 
   section('Local infrastructure (Docker Compose)');
   const services = [
-    ['postgres', 'PostgreSQL 17 + pgvector', 5432, s.dockerInstalled],
+    ['db', 'PostgreSQL 16 + pgvector 0.8.7', 5432, s.dockerInstalled],
     ['ollama', 'Ollama — local embeddings only', 11434, s.dockerInstalled],
     ['searxng', 'SearXNG metasearch', 8888, s.dockerInstalled],
     ['ktor-api', 'Ktor backend (once built)', 8080, s.apiHasSrc],
@@ -856,7 +862,7 @@ async function ensurePostgres(s) {
   const exists = (tryShell('docker ps -a --format "{{.Names}}"') ?? '').includes('recipe-pg');
   const cmd = exists
     ? 'docker start recipe-pg'
-    : 'docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 pgvector/pgvector:pg16';
+    : `docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 ${PGVECTOR_IMAGE}`;
   await run(cmd);
 
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1156,10 +1162,12 @@ async function startInfra() {
   const services = await checkbox({
     message: 'Which services to start?',
     choices: [
-      { name: 'PostgreSQL + pgvector (port 5432)', value: 'postgres', checked: true },
-      { name: 'Ollama local — embeddings only (port 11434)', value: 'ollama', checked: true },
-      { name: 'SearXNG metasearch (port 8888)', value: 'searxng', checked: false },
-      { name: 'All services', value: 'all' },
+      {
+        name: 'PostgreSQL 16 + pgvector 0.8.7 (port 5432)',
+        value: POSTGRES_COMPOSE_SERVICE,
+        checked: true,
+      },
+      { name: 'All configured services', value: 'all' },
     ],
   });
 
@@ -1184,8 +1192,9 @@ async function scaffoldCompose() {
 # Usage: docker compose -f infra/docker-compose.yml up -d
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
+  ${POSTGRES_COMPOSE_SERVICE}:
+    image: ${PGVECTOR_IMAGE}
+    container_name: recipe-pg
     restart: unless-stopped
     environment:
       POSTGRES_DB: recipe_dev
@@ -1194,7 +1203,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - recipe_pg_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U recipe -d recipe_dev"]
       interval: 5s
@@ -1222,7 +1231,7 @@ services:
   #     - ./searxng:/etc/searxng
 
 volumes:
-  postgres_data:
+  recipe_pg_data:
   # ollama_data:
 `;
 
@@ -1233,7 +1242,7 @@ volumes:
   const startNow = await confirm({ message: 'Start Postgres now?', default: true });
   if (startNow) {
     console.log('');
-    await run('docker compose -f infra/docker-compose.yml up -d postgres');
+    await run(`docker compose -f infra/docker-compose.yml up -d ${POSTGRES_COMPOSE_SERVICE}`);
     console.log(`\n${ok('Postgres started on port 5432.')}`);
     console.log(dim('  DB:  recipe_dev'));
     console.log(dim('  User: recipe'));
@@ -1601,7 +1610,7 @@ async function main() {
           value: 'backend',
         },
         {
-          name: `🐳  Local infrastructure (Docker)${s.hasDockerCompose ? '' : c.dim + '  — SETUP-03 not started' + c.reset}`,
+          name: `🐳  Local PostgreSQL (Docker)${s.hasDockerCompose ? '' : c.dim + '  — SETUP-03 not started' + c.reset}`,
           value: 'infra',
         },
         {

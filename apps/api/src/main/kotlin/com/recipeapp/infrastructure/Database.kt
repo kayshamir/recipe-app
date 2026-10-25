@@ -4,6 +4,7 @@ import io.ktor.server.application.*
 import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.v1.jdbc.Database
 import org.slf4j.LoggerFactory
+import java.sql.SQLException
 
 private val logger = LoggerFactory.getLogger("Database")
 
@@ -47,6 +48,16 @@ private fun runMigrations(c: DbConfig) {
         .migrate()
 }
 
+/**
+ * Connection-class SQL states mean the server cannot be reached. Those remain
+ * recoverable in local development; authentication and migration failures do
+ * not, because continuing would hide a reachable but incompatible database.
+ */
+private fun Throwable.isDatabaseUnavailable(): Boolean =
+    generateSequence(this) { it.cause }
+        .filterIsInstance<SQLException>()
+        .any { it.sqlState?.startsWith("08") == true }
+
 var database: Database? = null
     private set
 
@@ -58,7 +69,11 @@ fun Application.configureDatabase() {
             runMigrations(c)
             logger.info("Flyway migrations applied")
         } catch (e: Exception) {
-            // Dev convenience: keep booting so /healthz can report the degraded state.
+            if (!e.isDatabaseUnavailable()) {
+                throw e
+            }
+
+            // Dev convenience: keep booting only when no database is reachable.
             logger.warn("Flyway migration skipped - is Postgres running on :5432?", e)
         }
     } else {
