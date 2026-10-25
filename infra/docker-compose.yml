@@ -1,0 +1,36 @@
+# Local Postgres for the recipe-app backend.
+# Scope: DATABASE ONLY (backend endpoints + Postgres). No Ollama / SearXNG here.
+#
+# Usage:
+#   docker compose -f infra/docker-compose.yml up -d      # start
+#   docker compose -f infra/docker-compose.yml ps         # status
+#   docker compose -f infra/docker-compose.yml down       # stop (keeps data)
+#   docker compose -f infra/docker-compose.yml down -v    # stop + wipe data
+#
+# Credentials match the API defaults (apps/api/.env.example and Database.kt),
+# so a freshly started Ktor server connects with zero extra config.
+name: recipe-infra
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: recipe-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-recipe}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-recipe}
+      POSTGRES_DB: ${POSTGRES_DB:-recipe_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - recipe_pg_data:/var/lib/postgresql/data
+      # Runs once, on first initialization of an empty data dir.
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recipe} -d ${POSTGRES_DB:-recipe_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  recipe_pg_data:
