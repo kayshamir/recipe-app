@@ -13,7 +13,7 @@ name: recipe-infra
 
 services:
   db:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.7-pg16
     container_name: recipe-pg
     restart: unless-stopped
     environment:
@@ -24,8 +24,6 @@ services:
       - '5432:5432'
     volumes:
       - recipe_pg_data:/var/lib/postgresql/data
-      # Runs once, on first initialization of an empty data dir.
-      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-recipe} -d ${POSTGRES_DB:-recipe_dev}']
       interval: 5s

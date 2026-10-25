@@ -1,6 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { Socket } from 'node:net';
 
+export const POSTGRES_COMPOSE_SERVICE = 'db';
+export const PGVECTOR_IMAGE = 'pgvector/pgvector:0.8.7-pg16';
+
 export function gradleWrapperForPlatform(platform) {
   return platform === 'win32' ? 'gradlew.bat' : './gradlew';
 }

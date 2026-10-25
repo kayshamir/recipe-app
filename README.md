@@ -34,7 +34,7 @@ apps/
 packages/
   api-contract/           OpenAPI spec · generated TypeScript types [SETUP-02]
 infra/
-  docker-compose.yml      Postgres+pgvector · Ollama · SearXNG      [SETUP-03]
+  docker-compose.yml      PostgreSQL 16 + pgvector 0.8.7             [SETUP-03]
 scripts/
   dev.mjs                 Interactive dev guide (npm run start)
   allow-expo-lan.ps1      Windows firewall rule for Metro port 8082
@@ -84,3 +84,5 @@ an existing forwarding conflict, which is why LAN uses 8082. See
 - [Backlog](BACKLOG.md)
 - [Mobile app README](apps/mobile/README.md)
 - [SETUP-01 handover](apps/mobile/SETUP-01.md)
+- [SETUP-03 database handover](apps/api/SETUP-03.md)
+- [Domain language](CONTEXT.md)

@@ -102,11 +102,11 @@ The setup backlog has **three parent tickets**, one per selected stack component
 
 ### Ticket SETUP-03 - Database: PostgreSQL + pgvector
 
-- [ ] **SETUP-03 - Set up PostgreSQL with pgvector**
-  - [ ] Configure the PostgreSQL development database.
-  - [ ] Enable pgvector through a repeatable, versioned migration.
-  - [ ] Establish vector storage and indexing linked to knowledge records and content versions.
-  - [ ] Verify that a representative vector can be stored and queried.
+- [x] **SETUP-03 - Set up PostgreSQL with pgvector**
+  - [x] Configure the PostgreSQL development database.
+  - [x] Enable pgvector through a repeatable, versioned migration.
+  - [x] Establish vector storage and indexing linked to knowledge records and content versions.
+  - [x] Verify that a representative vector can be stored and queried.
   - **Done when:** the database is reproducible from migrations and supports vector storage/querying. Embedding provider and dimensions follow the eventual provider choice rather than being hard-coded in the client.
 
 ## Phase 1 — Content foundation
