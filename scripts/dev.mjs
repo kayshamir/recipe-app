@@ -19,6 +19,8 @@ import { networkInterfaces } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { gradleWrapperForPlatform, isTcpPortOpen, probeLocalPostgres } from './dev-runtime.mjs';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const MOBILE = resolve(ROOT, 'apps', 'mobile');
 const API = resolve(ROOT, 'apps', 'api');
@@ -28,6 +30,7 @@ const MOBILE_ENV = resolve(MOBILE, '.env');
 const MOBILE_ENV_EXAMPLE = resolve(MOBILE, '.env.example');
 const API_ENV = resolve(API, '.env');
 const DOCKER_COMPOSE = resolve(ROOT, 'infra', 'docker-compose.yml');
+const GRADLE_WRAPPER = gradleWrapperForPlatform(process.platform);
 
 // ── ANSI helpers ─────────────────────────────────────────────────────────────
 const c = {
@@ -175,6 +178,98 @@ function runWatching(command, { cwd = ROOT, env = process.env, onLine = () => {}
       code === 0 ? res() : rej(new Error(`exit ${code}`, { cause: { code } })),
     );
     child.on('error', rej);
+  });
+}
+
+/**
+ * Kill a spawned shell AND its whole child tree (java / node). On Windows a
+ * plain child.kill() only stops cmd.exe, orphaning the Gradle-launched JVM and
+ * Metro's node process — taskkill /T /F reaps them so ports free up cleanly.
+ */
+function killTree(child) {
+  if (!child || child.pid == null) return;
+  if (process.platform === 'win32') {
+    try {
+      execSync(`taskkill /pid ${child.pid} /T /F`, { stdio: 'ignore' });
+      return;
+    } catch {
+      /* already gone or not a tree root — fall through */
+    }
+  }
+  try {
+    child.kill('SIGTERM');
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Run several long-lived commands at once, prefixing every output line with a
+ * colored tag, and tear the whole group down on Ctrl+C. This is what lets the
+ * Ktor API and Metro share a single terminal for full-stack development.
+ */
+function runConcurrent(tasks) {
+  return new Promise((res) => {
+    const children = [];
+    let exited = 0;
+    let down = false;
+    const prefix = (color, name) => `${color}${name.padEnd(6)}${c.reset}│`;
+
+    const teardown = (reason) => {
+      if (down) return;
+      down = true;
+      if (reason === 'sigint') {
+        console.log(`\n  ${info('Stopping full stack…')}`);
+        children.forEach(killTree);
+      }
+      process.removeListener('SIGINT', onInt);
+      res();
+    };
+    function onInt() {
+      teardown('sigint');
+    }
+    process.on('SIGINT', onInt);
+
+    const spawnOne = ({ name, command, cwd, color, delayMs = 0 }) => {
+      const tag = prefix(color ?? c.blue, name);
+      const start = () => {
+        const child = spawn(command, {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          shell: true,
+          cwd,
+          env: process.env,
+        });
+        const pipe = (stream) => {
+          if (!stream) return;
+          let buf = '';
+          stream.setEncoding('utf8');
+          const emit = (line) => console.log(`${tag} ${line}`);
+          stream.on('data', (chunk) => {
+            buf += chunk;
+            const lines = buf.split(/\r?\n/);
+            buf = lines.pop() ?? '';
+            lines.forEach(emit);
+          });
+          stream.on('close', () => {
+            if (buf) emit(buf);
+          });
+        };
+        pipe(child.stdout);
+        pipe(child.stderr);
+        child.on('exit', (code) => {
+          console.log(`${tag} ${dim(`process exited (code ${code})`)}`);
+          exited += 1;
+          if (exited >= tasks.length) teardown('all-exited');
+        });
+        children.push(child);
+      };
+      // A delayed task (e.g. the file watcher) starts only after the primary
+      // process is up, so two Gradle/Kotlin compilations never overlap.
+      if (delayMs > 0) setTimeout(start, delayMs);
+      else start();
+    };
+
+    tasks.forEach(spawnOne);
   });
 }
 
@@ -667,7 +762,7 @@ async function startMobile() {
   }
 
   const wantedPort = connection === 'tunnel' ? 8083 : 8082;
-  const portBusy = tryShell(`netstat -ano | findstr ":${wantedPort}" | findstr "LISTENING"`);
+  const portBusy = await isTcpPortOpen(wantedPort);
   preflight.push([
     portBusy ? warn(`Port ${wantedPort}`) : ok(`Port ${wantedPort}`),
     portBusy
@@ -713,9 +808,86 @@ async function startMobile() {
   await run(`npm run ${script}`);
 }
 
+// ── ENSURE POSTGRES ──────────────────────────────────────────────────────────
+// Reuse-or-start local Postgres (pgvector). Shared by the full-stack launcher
+// and the backend-only path so a solo `./gradlew run` can be DB-ready in one
+// step. Returns true only when the expected local database authenticates;
+// false when setup is skipped, unavailable, or a conflicting server owns 5432.
+async function ensurePostgres(s) {
+  if (await isTcpPortOpen(5432)) {
+    const probe = probeLocalPostgres();
+    if (probe === 'ready') {
+      console.log(`  ${ok('Postgres ready on :5432 (db recipe_dev, user recipe).')}`);
+      return true;
+    }
+    if (probe === 'client-missing') {
+      console.log(
+        `  ${warn('Something is listening on :5432, but psql is unavailable to verify its credentials.')}`,
+      );
+      return false;
+    }
+    if (probe === 'credentials-rejected' || probe === 'configuration-rejected') {
+      console.log(`  ${fail('Port 5432 is occupied by a different or incompatible PostgreSQL.')}`);
+      console.log(
+        `    ${dim('The server there rejected recipe / recipe_dev; Docker recipe-pg was not selected by localhost.')}`,
+      );
+      console.log(
+        `    ${dim('Stop the conflicting PostgreSQL service, or point DATABASE_URL at a different port.')}`,
+      );
+      return false;
+    }
+    console.log(`  ${fail('Port 5432 is open, but the expected recipe database is unreachable.')}`);
+    return false;
+  }
+  if (!s.dockerInstalled) {
+    console.log(
+      `  ${warn('Docker not installed — start Postgres yourself, else the API runs degraded.')}`,
+    );
+    return false;
+  }
+  const start = await confirm({
+    message: 'Start Postgres (pgvector) via Docker now?',
+    default: true,
+  });
+  if (!start) {
+    console.log(`  ${warn('Skipping Postgres — the API starts but DB-backed routes return 503.')}`);
+    return false;
+  }
+  const exists = (tryShell('docker ps -a --format "{{.Names}}"') ?? '').includes('recipe-pg');
+  const cmd = exists
+    ? 'docker start recipe-pg'
+    : 'docker run -d --name recipe-pg -e POSTGRES_USER=recipe -e POSTGRES_PASSWORD=recipe -e POSTGRES_DB=recipe_dev -p 5432:5432 pgvector/pgvector:pg16';
+  await run(cmd);
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (await isTcpPortOpen(5432)) break;
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+
+  const probe = probeLocalPostgres();
+  if (probe === 'ready') {
+    console.log(`  ${ok('Postgres up on localhost:5432 (db recipe_dev, user/pass recipe).')}`);
+    return true;
+  }
+  if (probe === 'client-missing' && (await isTcpPortOpen(5432))) {
+    console.log(
+      `  ${warn('Postgres is listening on :5432; install psql to let the wizard verify credentials.')}`,
+    );
+    return false;
+  }
+
+  console.log(
+    `  ${fail('recipe-pg started, but localhost:5432 did not accept recipe credentials.')}`,
+  );
+  console.log(`    ${dim('Check for another PostgreSQL service already using port 5432.')}`);
+  return false;
+}
+
 // ── START BACKEND API ────────────────────────────────────────────────────────
 async function startBackend() {
   const s = workspaceStatus();
+  const postgresPortOpen = await isTcpPortOpen(5432);
+  const postgresReady = postgresPortOpen && probeLocalPostgres() === 'ready';
   section('Backend API — Kotlin / Ktor');
 
   if (!s.apiHasSrc) {
@@ -731,49 +903,72 @@ async function startBackend() {
     if (!continueAnyway) return;
   }
 
-  // Prerequisites checklist
-  const prereqs = [
+  // Only Java + the Gradle wrapper are truly required to run the API; the
+  // wrapper is checked by file presence (a global `gradle` is never needed).
+  // Docker / Postgres are OPTIONAL — without them the API boots and DB routes
+  // return 503 (graceful degradation), so they must never block the run.
+  const hasWrapper = existsSync(resolve(API, GRADLE_WRAPPER));
+
+  const required = [
     {
-      label: 'Java JDK 17+ (Temurin recommended)',
+      label: 'Java JDK 21 (Temurin recommended)',
       installed: s.javaInstalled,
       hint: 'winget install EclipseAdoptium.Temurin.21.JDK',
     },
     {
-      label: 'Gradle (or use ./gradlew)',
-      installed: s.gradleInstalled,
-      hint: 'Included via Gradle Wrapper: ./gradlew',
+      label: 'Gradle wrapper (apps/api/gradlew)',
+      installed: hasWrapper,
+      hint: 'Missing — the wrapper files were not found in apps/api',
     },
+  ];
+  const optional = [
     {
-      label: 'Docker Desktop',
+      label: 'Docker Desktop (for local Postgres)',
       installed: s.dockerInstalled,
-      hint: 'https://www.docker.com/products/docker-desktop/',
+      hint: 'Optional — without a DB, /healthz and /api/v1/recipes return 503',
     },
     {
-      label: 'Docker Compose file (infra/docker-compose.yml)',
-      installed: s.hasDockerCompose,
-      hint: 'See "Start local infra" option in this guide',
+      label: 'Recipe Postgres ready on :5432',
+      installed: postgresReady,
+      hint: 'Optional — start it via "Local infrastructure (Docker)" or the full-stack launcher',
     },
   ];
 
-  console.log(b('Prerequisites:') + '\n');
-  for (const p of prereqs) {
+  console.log(b('Required:') + '\n');
+  for (const p of required) {
     console.log(`  ${p.installed ? ok(p.label) : fail(p.label)}`);
-    if (!p.installed) console.log(`    ${dim(`Install: ${p.hint}`)}`);
+    if (!p.installed) console.log(`    ${dim(p.hint)}`);
+  }
+  console.log(`\n${b('Optional:')}`);
+  for (const p of optional) {
+    console.log(`  ${p.installed ? ok(p.label) : warn(p.label)}`);
   }
 
-  if (!prereqs.every((p) => p.installed)) {
-    console.log(`\n${warn('Missing prerequisites. Resolve the above, then retry.')}`);
+  if (!required.every((p) => p.installed)) {
+    console.log(`\n${warn('Missing a required tool. Resolve the ✘ items above, then retry.')}`);
     return;
   }
+
+  // A solo backend run can be DB-ready in one step. This also verifies that an
+  // existing :5432 listener accepts the expected local credentials instead of
+  // assuming any process on that port is recipe-pg.
+  console.log('');
+  await ensurePostgres(s);
 
   console.log('');
   const what = await select({
     message: 'What do you want to run?',
     choices: [
       {
-        name: 'Gradle build + run Ktor server (dev)',
+        name: '🔥  Run with hot reload (server + continuous compile)',
+        value: 'gradle-watch',
+        description:
+          './gradlew run  +  ./gradlew -t classes — edit a .kt file and it reloads (Ctrl+C stops both)',
+      },
+      {
+        name: 'Gradle build + run Ktor server (no reload)',
         value: 'gradle-run',
-        description: './gradlew run — hot reload with Kotlin',
+        description: './gradlew run — start Ktor on http://localhost:8080',
       },
       { name: 'Gradle tests only', value: 'gradle-test', description: './gradlew test' },
       {
@@ -786,16 +981,151 @@ async function startBackend() {
 
   if (what === 'info') {
     console.log(`\n${b('From apps/api:')}
-  ${dim('./gradlew run')}          # start Ktor on http://localhost:8080
-  ${dim('./gradlew test')}         # run unit tests
-  ${dim('./gradlew build')}        # build a fat JAR
+  ${dim('./gradlew run')}            # start Ktor on http://localhost:8080
+  ${dim('./gradlew -t classes')}     # in a 2nd terminal: recompile on change → autoreload
+  ${dim('./gradlew test')}           # run unit tests
+  ${dim('./gradlew build')}          # build a fat JAR
+
+  ${dim('Hot reload = a one-shot build, then the server + a watcher; the "run with hot reload" option does it for you.')}
 `);
+    return;
+  }
+
+  if (what === 'gradle-watch') {
+    console.log(`\n${info('Hot reload:  api = ./gradlew run   ·   watch = ./gradlew -t classes')}`);
+    console.log(
+      dim('  Building once first so the server and watcher never compile at the same time…\n'),
+    );
+    // One-shot, serialized build. Launching `run` and `-t classes` cold together
+    // makes two Kotlin daemons grab the same incremental cache and crash
+    // ("Storage … source-to-classes.tab is already registered"), which then
+    // surfaces as bogus "unresolved reference" errors. Precompiling once means
+    // both start up-to-date and only the watcher recompiles on later edits.
+    await run(`${GRADLE_WRAPPER} classes`, { cwd: API });
+    console.log('');
+    await runConcurrent([
+      { name: 'api', command: `${GRADLE_WRAPPER} run`, cwd: API, color: c.blue },
+      {
+        name: 'watch',
+        command: `${GRADLE_WRAPPER} -t classes`,
+        cwd: API,
+        color: c.cyan,
+        delayMs: 8000,
+      },
+    ]);
+    console.log(`\n  ${ok('Backend stopped.')}\n`);
     return;
   }
 
   const gradleCmd = what === 'gradle-run' ? ['run'] : ['test'];
   console.log(`\n${info(`Running: ./gradlew ${gradleCmd.join(' ')}`)}\n`);
-  await run(`gradlew.bat ${gradleCmd.join(' ')}`, { cwd: API });
+  await run(`${GRADLE_WRAPPER} ${gradleCmd.join(' ')}`, { cwd: API });
+}
+
+// ── FULL STACK: backend + mobile together ────────────────────────────────────
+async function startFullStack() {
+  const s = workspaceStatus();
+  panel(`${c.bold}${c.green}🚀  Full stack — Ktor API + Expo mobile, one terminal${c.reset}`, [
+    dim('Brings up Postgres (Docker) → Ktor (./gradlew run) → Metro together.'),
+    dim('Output is tagged  api │ metro │  —  Ctrl+C stops everything at once.'),
+  ]);
+
+  if (!s.apiHasSrc) {
+    console.log(`\n  ${fail('apps/api has no Kotlin sources yet — build the backend first.')}`);
+    return;
+  }
+
+  // 1) Database — reuse a running Postgres if present, else start one.
+  //    Shared with the backend-only launcher (ensurePostgres) so both behave
+  //    identically: re-check :5432, offer to start recipe-pg, report honestly.
+  const dbReady = await ensurePostgres(s);
+
+  // 2) API env file — create from the example if missing.
+  const apiExample = resolve(API, '.env.example');
+  if (!existsSync(API_ENV) && existsSync(apiExample)) {
+    copyFileSync(apiExample, API_ENV);
+    console.log(`  ${ok('Created apps/api/.env from .env.example (local dev defaults).')}`);
+  }
+
+  // 3) How the device reaches this machine → the API base URL mobile will use.
+  const mode = await select({
+    message: 'How will the phone/emulator reach this PC?',
+    choices: [
+      { name: '🤖  Android emulator on this laptop   (API at 10.0.2.2)', value: 'android' },
+      { name: '📶  Phone on the same Wi-Fi   (API at this PC\u2019s LAN IP)', value: 'lan' },
+      { name: '🌐  Metro via tunnel   (API still reached over LAN IP)', value: 'tunnel' },
+    ],
+  });
+
+  const ips = getLanIPs();
+  let apiUrl =
+    mode === 'android'
+      ? 'http://10.0.2.2:8080'
+      : ips.length
+        ? `http://${ips[0]}:8080`
+        : 'http://localhost:8080';
+  apiUrl = await input({ message: 'EXPO_PUBLIC_API_URL for the mobile app', default: apiUrl });
+
+  // Persist it so the app actually reads the right address.
+  if (!existsSync(MOBILE_ENV) && existsSync(MOBILE_ENV_EXAMPLE))
+    copyFileSync(MOBILE_ENV_EXAMPLE, MOBILE_ENV);
+  if (existsSync(MOBILE_ENV)) {
+    writeFileSync(
+      MOBILE_ENV,
+      readFileSync(MOBILE_ENV, 'utf8').replace(
+        /^EXPO_PUBLIC_API_URL=.*/m,
+        `EXPO_PUBLIC_API_URL=${apiUrl}`,
+      ),
+      'utf8',
+    );
+    console.log(`  ${ok(`mobile → ${b(apiUrl)}`)}`);
+    if (mode === 'tunnel')
+      console.log(
+        `  ${dim('Note: tunnel carries Metro only — the phone still needs to reach this LAN IP for API calls.')}`,
+      );
+  }
+
+  const mobileScript = { android: 'android', lan: 'mobile:lan', tunnel: 'mobile:tunnel' }[mode];
+
+  console.log('');
+  panel(
+    'Launching',
+    [
+      `  ${c.blue}api${c.reset}   ${dim('./gradlew run  →  http://localhost:8080')}`,
+      `  ${c.cyan}watch${c.reset} ${dim('./gradlew -t classes  →  hot reload on .kt edits')}`,
+      `  ${c.magenta}metro${c.reset} ${dim(`npm run ${mobileScript}`)}`,
+      dbReady
+        ? `  ${c.green}db${c.reset}   ${dim('postgres :5432 (recipe_dev)')}`
+        : `  ${dim('db     (not started)')}`,
+      `  ${dim('Ctrl+C stops all of them.')}`,
+    ],
+    { accent: c.green },
+  );
+
+  if (!(await confirm({ message: 'Launch full stack now?', default: true }))) {
+    console.log(`\n  ${dim('Cancelled.')}\n`);
+    return;
+  }
+
+  // Serialized one-shot build first: prevents the API server and the hot-reload
+  // watcher from running compileKotlin concurrently (two Kotlin daemons on one
+  // incremental cache crash each other). After this both start up-to-date.
+  console.log(`\n  ${info('Preparing backend build (one-shot)…')}`);
+  await run(`${GRADLE_WRAPPER} classes`, { cwd: API });
+
+  console.log('');
+  await runConcurrent([
+    { name: 'api', command: `${GRADLE_WRAPPER} run`, cwd: API, color: c.blue },
+    {
+      name: 'watch',
+      command: `${GRADLE_WRAPPER} -t classes`,
+      cwd: API,
+      color: c.cyan,
+      delayMs: 8000,
+    },
+    { name: 'metro', command: `npm run ${mobileScript}`, cwd: ROOT, color: c.magenta },
+  ]);
+  console.log(`\n  ${ok('Full stack stopped.')}\n`);
 }
 
 // ── LOCAL INFRASTRUCTURE (Docker) ────────────────────────────────────────────
@@ -855,18 +1185,18 @@ async function scaffoldCompose() {
 
 services:
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
-      POSTGRES_DB: recipe_app_dev
-      POSTGRES_USER: recipe_app
-      POSTGRES_PASSWORD: recipe_app_dev_secret
+      POSTGRES_DB: recipe_dev
+      POSTGRES_USER: recipe
+      POSTGRES_PASSWORD: recipe
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U recipe_app -d recipe_app_dev"]
+      test: ["CMD-SHELL", "pg_isready -U recipe -d recipe_dev"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -905,9 +1235,9 @@ volumes:
     console.log('');
     await run('docker compose -f infra/docker-compose.yml up -d postgres');
     console.log(`\n${ok('Postgres started on port 5432.')}`);
-    console.log(dim('  DB:  recipe_app_dev'));
-    console.log(dim('  User: recipe_app'));
-    console.log(dim('  Pass: recipe_app_dev_secret  (local dev only — never use in production)'));
+    console.log(dim('  DB:  recipe_dev'));
+    console.log(dim('  User: recipe'));
+    console.log(dim('  Pass: recipe  (local dev only — never use in production)'));
   }
 }
 
@@ -1049,9 +1379,9 @@ async function setupEnvs() {
         [
           '# Local development secrets only — NEVER commit this file.',
           '# Add infra/.env to .gitignore before using.',
-          'POSTGRES_DB=recipe_app_dev',
-          'POSTGRES_USER=recipe_app',
-          'POSTGRES_PASSWORD=recipe_app_dev_secret',
+          'POSTGRES_DB=recipe_dev',
+          'POSTGRES_USER=recipe',
+          'POSTGRES_PASSWORD=recipe',
           '',
         ].join('\n'),
         'utf8',
@@ -1064,22 +1394,20 @@ async function setupEnvs() {
   }
 
   if (pick === 'api') {
-    console.log(warn('SETUP-02 is not started. No Ktor .env.example exists yet.'));
-    const show = await confirm({ message: 'Show the intended env var template?' });
-    if (show) {
-      console.log(
-        dim(`
-  DATABASE_URL=jdbc:postgresql://localhost:5432/recipe_app_dev
-  DATABASE_USER=recipe_app
-  DATABASE_PASSWORD=recipe_app_dev_secret
-  JWT_SECRET=change-me-in-production
-  OLLAMA_CLOUD_API_KEY=your-ollama-cloud-key
-  OLLAMA_LOCAL_URL=http://localhost:11434
-  SEARXNG_URL=http://localhost:8888
-  RESEND_API_KEY=your-resend-key
-`),
-      );
+    const apiExample = resolve(API, '.env.example');
+    if (!existsSync(apiExample)) {
+      console.log(warn('No apps/api/.env.example found yet.'));
+      return;
     }
+    if (
+      existsSync(API_ENV) &&
+      !(await confirm({ message: 'apps/api/.env exists — overwrite from .env.example?' }))
+    )
+      return;
+    copyFileSync(apiExample, API_ENV);
+    console.log(ok('Created apps/api/.env from .env.example.'));
+    console.log(dim('  DATABASE_URL / DATABASE_USER / DATABASE_PASSWORD / JWT_SECRET'));
+    console.log(dim('  Defaults target the local Postgres (recipe_dev / recipe / recipe).\n'));
   }
 }
 
@@ -1257,7 +1585,11 @@ async function main() {
       message: 'What would you like to do?',
       choices: [
         {
-          name: `${c.green}▶${c.reset} 📱  Launch the mobile app  ${c.dim}(guided wizard — recommended)${c.reset}`,
+          name: `${c.green}▶${c.reset} 🚀  Run backend + mobile together  ${c.dim}(full stack — recommended)${c.reset}`,
+          value: 'fullstack',
+        },
+        {
+          name: `📱  Launch the mobile app only  ${c.dim}(guided wizard)${c.reset}`,
           value: 'mobile',
         },
         {
@@ -1284,6 +1616,10 @@ async function main() {
     });
 
     try {
+      if (choice === 'fullstack') {
+        await startFullStack();
+        break;
+      } // concurrent launcher takes over the terminal
       if (choice === 'mobile') {
         await startMobile();
         break;
