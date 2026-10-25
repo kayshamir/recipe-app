@@ -14,19 +14,58 @@ Copy-Item apps/mobile/.env.example apps/mobile/.env
 npm run mobile -- --go
 ```
 
-Run Expo commands below from `apps/mobile` (`cd apps/mobile`).
+> `npm ci` may fail with `EBUSY` if Metro is still running. Stop the Metro
+> terminal first, then retry.
+
+### Start scripts — which one to use
+
+All commands below are run **from the repository root**.
+
+| Command | What it does | When to use |
+|---|---|---|
+| `npm run mobile` | LAN on default port 8081 | Default; phone and laptop on same Wi-Fi |
+| `npm run mobile:lan` | LAN on port 8082 | Port 8081 is blocked or forwarded; firewall rules already applied |
+| `npm run mobile:tunnel` | Tunnel on port 8083 | Phone on a different network, blocked LAN, or any cross-network case |
+
+Each script ultimately calls `expo start`. To run a command directly from
+`apps/mobile`, use `npx expo start --go [--tunnel|--port 8082]`.
+
 `npx expo start` defaults to Expo Go. Scan its QR code with the iPhone Camera
-and open the link in Expo Go; keep the phone and computer on the same network.
-Press `a` for a running Android emulator. No custom development client is installed.
-Expo Go must support SDK 58. `npm run web` is a convenience preview; native
-SQLite, SecureStore, and offline behavior must be validated on Android.
+and open the link in Expo Go; keep the phone and computer on the same network
+(LAN scripts) or connected to the internet (tunnel). Press `a` for a running
+Android emulator. No custom development client is installed. Expo Go must
+support SDK 58. `npm run web` is a convenience preview; native SQLite,
+SecureStore, and offline behavior must be validated on Android.
 
 Install Android Studio, its SDK/platform tools, and an Android Virtual Device;
 start the AVD in Device Manager before running the Android command. Check
 `adb devices` if Expo cannot find it. A physical Android phone can use a compatible
 Expo Go app on the same network. Allow Metro through the Windows firewall if needed.
 
-## iPhone timeout on the development network
+## Connecting a phone over LAN
+
+### Laptop on the phone's own hotspot
+
+When the laptop is connected to the phone's Wi-Fi hotspot, both devices are
+already on the same subnet — use `npm run mobile:lan` (port 8082). The phone
+should reach the laptop's hotspot-assigned IP directly.
+
+Windows may classify a phone hotspot as a **Public** network profile. The
+`scripts/allow-expo-lan.ps1` rule targets the **Private** profile only. If
+the connection is blocked, open an Administrator PowerShell and run:
+
+```powershell
+# allow Node on TCP 8082 for Public networks too
+New-NetFirewallRule -DisplayName "Metro 8082 (Public)" `
+  -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8082 `
+  -Program (Get-Command node).Source -Profile Public
+```
+
+To confirm the server is reachable from the phone, open
+`http://<laptop-hotspot-ip>:8082/status` in the phone's browser; a running
+Metro responds with `packager-status:running`.
+
+### Laptop and phone on a shared Wi-Fi network
 
 From the repository root, run `npm run mobile:lan` to use port 8082.
 Inside `apps/mobile`, the equivalent is `npx expo start --go --port 8082`.
@@ -44,14 +83,16 @@ Do not disable the firewall or delete unrelated forwarding rules. To diagnose LA
 access, open `http://<computer-LAN-IP>:8082/status` from the phone; a reachable
 Metro server responds with `packager-status:running`.
 
-If that status page works on the laptop but times out on the phone, use Expo's
-built-in tunnel instead of repeating LAN launches. SDK 58 requires an Expo login
-for this tunnel provider. From `apps/mobile`, run `npx expo login` interactively;
-then from the repository root run `npm run mobile:tunnel`. It starts Expo Go on
-port 8083 with a tunnel URL. Scan that session's new QR; the old `192.168...` URL
-still uses the blocked LAN path. No ngrok package is required for this provider.
-The tunnel requires internet access on both devices. iPhone rendering remains
-unverified until the phone successfully loads the project.
+## Connecting a phone via tunnel (any network)
+
+If LAN fails on any network, use Expo's built-in tunnel instead of repeating
+LAN launches. SDK 58 requires an Expo login for this tunnel provider.
+From `apps/mobile`, run `npx expo login` interactively; then from the
+repository root run `npm run mobile:tunnel`. It starts Expo Go on port 8083
+with a tunnel URL (`exp://exp.host/…`). Scan that session's QR; the old
+`192.168…` URL is still the blocked LAN path. No ngrok package is required
+for this provider. The tunnel requires internet access on both devices.
+iPhone rendering remains unverified until the phone successfully loads the project.
 
 ## API environment
 
