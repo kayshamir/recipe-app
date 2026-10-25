@@ -16,11 +16,11 @@ this codebase using Laravel concepts as the reference frame.
 
 ## Prerequisites
 
-| Tool | Version | Notes |
-|---|---|---|
-| JDK | 21 (Temurin recommended) | `winget install EclipseAdoptium.Temurin.21.JDK` |
-| Gradle | none needed | use the wrapper `./gradlew` (`gradlew.bat` on Windows) |
-| Docker Desktop | latest | only for running Postgres locally |
+| Tool           | Version                  | Notes                                                  |
+| -------------- | ------------------------ | ------------------------------------------------------ |
+| JDK            | 21 (Temurin recommended) | `winget install EclipseAdoptium.Temurin.21.JDK`        |
+| Gradle         | none needed              | use the wrapper `./gradlew` (`gradlew.bat` on Windows) |
+| Docker Desktop | latest                   | only for running Postgres locally                      |
 
 ---
 
@@ -56,12 +56,12 @@ Settings come from two places (secrets never committed):
 - **Environment variables** — secrets, read in `infrastructure/Database.kt`.
   Copy `.env.example` → `.env`:
 
-| Variable | Default | Meaning |
-|---|---|---|
-| `DATABASE_URL` | `jdbc:postgresql://localhost:5432/recipe_dev` | JDBC URL |
-| `DATABASE_USER` / `DATABASE_PASSWORD` | `recipe` / `recipe` | credentials |
-| `AUTO_MIGRATE` | `true` | run Flyway on boot; set `false` to defer to CI/deploy |
-| `JWT_SECRET` | dev fallback | **must** be set for production |
+| Variable                              | Default                                       | Meaning                                               |
+| ------------------------------------- | --------------------------------------------- | ----------------------------------------------------- |
+| `DATABASE_URL`                        | `jdbc:postgresql://localhost:5432/recipe_dev` | JDBC URL                                              |
+| `DATABASE_USER` / `DATABASE_PASSWORD` | `recipe` / `recipe`                           | credentials                                           |
+| `AUTO_MIGRATE`                        | `true`                                        | run Flyway on boot; set `false` to defer to CI/deploy |
+| `JWT_SECRET`                          | dev fallback                                  | **must** be set for production                        |
 
 ---
 
@@ -71,7 +71,7 @@ Settings come from two places (secrets never committed):
   `src/main/resources/db/migration/` (e.g. `V1__create_recipes_table.sql`) and
   run automatically at startup unless `AUTO_MIGRATE=false`.
 - **Exposed owns runtime queries (DML) only** — it never creates schema.
-  `contexts/recipes/infrastructure/RecipesTable.kt` is a typed *mirror* of the
+  `contexts/recipes/infrastructure/RecipesTable.kt` is a typed _mirror_ of the
   Flyway schema; if they drift, queries fail loudly.
 - **Imports use Exposed 1.x's versioned packages** (`org.jetbrains.exposed.v1.*`
   — `v1.core`, `v1.jdbc`, `v1.javatime`). The old `org.jetbrains.exposed.sql.*`
@@ -90,15 +90,15 @@ Settings come from two places (secrets never committed):
 
 All feature routes are namespaced under `/api/v1`.
 
-| Method | Path | Purpose | Success | Errors |
-|---|---|---|---|---|
-| GET | `/` | liveness hello | 200 | — |
-| GET | `/healthz` | DB connectivity probe | 200 `{"status":"ok"}` | 503 `database-unavailable` |
-| GET | `/api/v1/recipes?limit=N` | list (limit clamped 1–100) | 200 | 503 if DB down |
-| POST | `/api/v1/recipes` | create `{title, cuisine?}` | 201 | 400 validation · 503 |
-| GET | `/api/v1/recipes/{id}` | fetch one | 200 | 404 · 400 bad id · 503 |
-| PUT | `/api/v1/recipes/{id}` | update `{title, cuisine?}` | 200 | 404 · 400 · 503 |
-| DELETE | `/api/v1/recipes/{id}` | delete | 204 | 404 · 503 |
+| Method | Path                      | Purpose                    | Success               | Errors                     |
+| ------ | ------------------------- | -------------------------- | --------------------- | -------------------------- |
+| GET    | `/`                       | liveness hello             | 200                   | —                          |
+| GET    | `/healthz`                | DB connectivity probe      | 200 `{"status":"ok"}` | 503 `database-unavailable` |
+| GET    | `/api/v1/recipes?limit=N` | list (limit clamped 1–100) | 200                   | 503 if DB down             |
+| POST   | `/api/v1/recipes`         | create `{title, cuisine?}` | 201                   | 400 validation · 503       |
+| GET    | `/api/v1/recipes/{id}`    | fetch one                  | 200                   | 404 · 400 bad id · 503     |
+| PUT    | `/api/v1/recipes/{id}`    | update `{title, cuisine?}` | 200                   | 404 · 400 · 503            |
+| DELETE | `/api/v1/recipes/{id}`    | delete                     | 204                   | 404 · 503                  |
 
 Errors use a consistent envelope: `{"error": "...", "message": "..."}` (see
 `infrastructure/StatusPages.kt`).
@@ -107,14 +107,14 @@ Errors use a consistent envelope: `{"error": "...", "message": "..."}` (see
 
 ## Building, running, testing
 
-| Task | Description |
-|---|---|
-| `./gradlew run` | Start Ktor on http://localhost:8080 |
+| Task                   | Description                                         |
+| ---------------------- | --------------------------------------------------- |
+| `./gradlew run`        | Start Ktor on http://localhost:8080                 |
 | `./gradlew -t classes` | Continuous compile — pair with `run` for hot reload |
-| `./gradlew test` | Run the unit + integration tests |
-| `./gradlew build` | Compile, test, and build the distribution |
+| `./gradlew test`       | Run the unit + integration tests                    |
+| `./gradlew build`      | Compile, test, and build the distribution           |
 
-**Hot reload:** autoreload (`ktor.development: true`) only *restarts* when
+**Hot reload:** autoreload (`ktor.development: true`) only _restarts_ when
 `.class` files change — it does not recompile Kotlin. Run `./gradlew -t classes`
 alongside `./gradlew run` (or use the wizard's **🔥 Run with hot reload**, which
 stages them so they never compile at the same instant). On a clean boot you'll

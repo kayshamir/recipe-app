@@ -15,15 +15,15 @@ Laravel is a **convention framework**: it ships the structure (folders,
 service container, facades, Artisan generators) and you fill it in.
 
 Ktor is a **HTTP kernel**: it ships routing, plugins, and an application
-builder — and *nothing else*. You compose the structure yourself with plain
+builder — and _nothing else_. You compose the structure yourself with plain
 Kotlin functions. There is no container, no facade layer, no `php artisan
 make:controller`. That absence feels scary for a week, then liberating:
 every dependency is visible, and the structure can evolve without fighting
 a framework's opinions.
 
-**Rule of thumb:** wherever Laravel uses *magic resolution*
+**Rule of thumb:** wherever Laravel uses _magic resolution_
 (`app()`, facades, type-hinted constructor injection), this codebase uses
-*explicit references* (module functions listed in `application.yaml`, a
+_explicit references_ (module functions listed in `application.yaml`, a
 global `database` val, direct function calls).
 
 ---
@@ -90,31 +90,31 @@ The dependency direction inside a context:
 
 ## 3. Concept map (the cheat sheet)
 
-| Laravel | Here | Where |
-|---|---|---|
-| `public/index.php` | `fun main()` | `main.kt` |
-| `bootstrap/app.php` (providers, middleware, exceptions registration) | `application.yaml` → `ktor.application.modules` list | `src/main/resources/` |
-| `app/Http/Kernel.php` middleware groups | Ktor **plugins** installed in module functions | `Http.kt`, `Serialization.kt`, `Security.kt` |
-| `routes/api.php` | `routing { }` inside `configureRouting()` | `Routing.kt` |
-| Controller class + action method | thin handler functions taking `ApplicationCall` | `contexts/recipes/interfaces/RecipesController.kt` |
-| Form Request validation | `@Serializable` DTO + explicit checks in the use case | `interfaces/RecipeDto.kt` + `application/RecipeService.kt` |
-| Eloquent Model (`Recipe`) | **three separate pieces**: `Recipe` (domain model), `RecipesTable` (schema mirror), `ExposedRecipeRepository` (queries) | `domain/Recipe.kt` · `infrastructure/RecipesTable.kt` |
-| Query Builder (`Recipe::query()`) | Exposed DSL: `RecipesTable.selectAll().where { }.limit()` | `infrastructure/ExposedRecipeRepository.kt` |
-| API Resource (`RecipeResource`) | `@Serializable data class RecipeSummary` / `RecipeDetail` | `interfaces/RecipeDto.kt` |
-| `config/database.php` + `.env` | `connectToDatabase()` reading env vars | `Database.kt` |
-| `config/*.php` generally | `application.yaml` (non-secret) + env vars (secrets) | `src/main/resources/` |
-| `php artisan migrate` | Flyway runs at startup (`AUTO_MIGRATE`), or on demand | `infrastructure/Database.kt` |
-| `database/migrations/xxxx_create_recipes_table.php` | `V1__create_recipes_table.sql` | `src/main/resources/db/migration/` |
-| `php artisan serve` | `./gradlew run` | — |
-| `php artisan make:*` | nothing — copy an existing domain folder and edit | — |
-| Auth guard / Sanctum | `authentication { jwt { ... } }` | `Security.kt` |
-| `Handler.php` / `withExceptions()` | `install(StatusPages)` exception→response map | `StatusPages.kt` |
-| Service Container / DI | explicit globals + function parameters (boring on purpose) | everywhere |
-| Facades (`DB::`, `Route::`) | don't exist; import and call the real thing | — |
-| Jobs + queue worker (`dispatch(new X)`) | coroutine scheduler + `jobs` table in Postgres | future module |
-| Artisan tinker / `php -a` | Gradle test tasks + `main()` | — |
-| `composer.json` | `build.gradle.kts` + `gradle/libs.versions.toml` (version catalog = `require` block) | project root |
-| Packagist | Maven Central | — |
+| Laravel                                                              | Here                                                                                                                    | Where                                                      |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `public/index.php`                                                   | `fun main()`                                                                                                            | `main.kt`                                                  |
+| `bootstrap/app.php` (providers, middleware, exceptions registration) | `application.yaml` → `ktor.application.modules` list                                                                    | `src/main/resources/`                                      |
+| `app/Http/Kernel.php` middleware groups                              | Ktor **plugins** installed in module functions                                                                          | `Http.kt`, `Serialization.kt`, `Security.kt`               |
+| `routes/api.php`                                                     | `routing { }` inside `configureRouting()`                                                                               | `Routing.kt`                                               |
+| Controller class + action method                                     | thin handler functions taking `ApplicationCall`                                                                         | `contexts/recipes/interfaces/RecipesController.kt`         |
+| Form Request validation                                              | `@Serializable` DTO + explicit checks in the use case                                                                   | `interfaces/RecipeDto.kt` + `application/RecipeService.kt` |
+| Eloquent Model (`Recipe`)                                            | **three separate pieces**: `Recipe` (domain model), `RecipesTable` (schema mirror), `ExposedRecipeRepository` (queries) | `domain/Recipe.kt` · `infrastructure/RecipesTable.kt`      |
+| Query Builder (`Recipe::query()`)                                    | Exposed DSL: `RecipesTable.selectAll().where { }.limit()`                                                               | `infrastructure/ExposedRecipeRepository.kt`                |
+| API Resource (`RecipeResource`)                                      | `@Serializable data class RecipeSummary` / `RecipeDetail`                                                               | `interfaces/RecipeDto.kt`                                  |
+| `config/database.php` + `.env`                                       | `connectToDatabase()` reading env vars                                                                                  | `Database.kt`                                              |
+| `config/*.php` generally                                             | `application.yaml` (non-secret) + env vars (secrets)                                                                    | `src/main/resources/`                                      |
+| `php artisan migrate`                                                | Flyway runs at startup (`AUTO_MIGRATE`), or on demand                                                                   | `infrastructure/Database.kt`                               |
+| `database/migrations/xxxx_create_recipes_table.php`                  | `V1__create_recipes_table.sql`                                                                                          | `src/main/resources/db/migration/`                         |
+| `php artisan serve`                                                  | `./gradlew run`                                                                                                         | —                                                          |
+| `php artisan make:*`                                                 | nothing — copy an existing domain folder and edit                                                                       | —                                                          |
+| Auth guard / Sanctum                                                 | `authentication { jwt { ... } }`                                                                                        | `Security.kt`                                              |
+| `Handler.php` / `withExceptions()`                                   | `install(StatusPages)` exception→response map                                                                           | `StatusPages.kt`                                           |
+| Service Container / DI                                               | explicit globals + function parameters (boring on purpose)                                                              | everywhere                                                 |
+| Facades (`DB::`, `Route::`)                                          | don't exist; import and call the real thing                                                                             | —                                                          |
+| Jobs + queue worker (`dispatch(new X)`)                              | coroutine scheduler + `jobs` table in Postgres                                                                          | future module                                              |
+| Artisan tinker / `php -a`                                            | Gradle test tasks + `main()`                                                                                            | —                                                          |
+| `composer.json`                                                      | `build.gradle.kts` + `gradle/libs.versions.toml` (version catalog = `require` block)                                    | project root                                               |
+| Packagist                                                            | Maven Central                                                                                                           | —                                                          |
 
 ---
 
@@ -123,16 +123,16 @@ The dependency direction inside a context:
 The project was scaffolded by [start.ktor.io](https://start.ktor.io), which
 follows a **"one file per framework concern"** layout:
 
-| File | Laravel equivalent role |
-|---|---|
-| `main.kt` | `public/index.php` — literally three lines, starts the engine |
-| `Http.kt` | middleware registration (CORS, compression, default headers) |
-| `Serialization.kt` | the "Accept: application/json" transformer (ContentNegotiation + kotlinx JSON) |
-| `Security.kt` | auth guard configuration |
-| `StatusPages.kt` | exception handler |
-| `Routing.kt` | `routes/api.php` |
-| `Database.kt` | `config/database.php` + a tiny bit of `DB` bootstrap |
-| ~~`Recipes.kt`~~ | the generator's single flat domain file — since split across the four DDD layers in `contexts/recipes/` (see § 6) |
+| File               | Laravel equivalent role                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `main.kt`          | `public/index.php` — literally three lines, starts the engine                                                     |
+| `Http.kt`          | middleware registration (CORS, compression, default headers)                                                      |
+| `Serialization.kt` | the "Accept: application/json" transformer (ContentNegotiation + kotlinx JSON)                                    |
+| `Security.kt`      | auth guard configuration                                                                                          |
+| `StatusPages.kt`   | exception handler                                                                                                 |
+| `Routing.kt`       | `routes/api.php`                                                                                                  |
+| `Database.kt`      | `config/database.php` + a tiny bit of `DB` bootstrap                                                              |
+| ~~`Recipes.kt`~~   | the generator's single flat domain file — since split across the four DDD layers in `contexts/recipes/` (see § 6) |
 
 `application.yaml` is the glue that Laravel keeps in PHP code: the `modules:`
 list is the ordered "boot these functions at startup" register, exactly like
@@ -148,7 +148,7 @@ why there are two folders with the same name.
 
 ## 5. Eloquent vs Exposed — the part that will surprise you most
 
-Laravel (Active Record — the model *is* the query and *is* the row):
+Laravel (Active Record — the model _is_ the query and _is_ the row):
 
 ```php
 $recipes = Recipe::query()
@@ -213,7 +213,7 @@ src/main/kotlin/
 ```
 
 Everything in one package. Fine. The cost of structure is ceremony; the cost
-of *no* structure is only paid when files multiply.
+of _no_ structure is only paid when files multiply.
 
 ### Stage 2 — bounded contexts with DDD layers (ADOPTED — this is the current layout)
 
@@ -262,12 +262,12 @@ imports no Ktor, no Exposed, nothing. That is what makes
 
 Layer cheat sheet vs. Laravel instinct:
 
-| Layer | Holds | May import | Laravel analogue |
-|---|---|---|---|
-| `domain/` | model + rules + port interfaces | only Kotlin stdlib | the business logic you *wish* lived outside `Model.php` |
-| `application/` | use-case classes | domain | `app/Actions` / service classes |
-| `infrastructure/` (context) | DB/external adapters | domain + framework | Eloquent model + a bound repository impl |
-| `interfaces/` | routes, controllers, DTOs | application + framework | `routes/api.php` + Controller + Resource |
+| Layer                       | Holds                           | May import              | Laravel analogue                                        |
+| --------------------------- | ------------------------------- | ----------------------- | ------------------------------------------------------- |
+| `domain/`                   | model + rules + port interfaces | only Kotlin stdlib      | the business logic you _wish_ lived outside `Model.php` |
+| `application/`              | use-case classes                | domain                  | `app/Actions` / service classes                         |
+| `infrastructure/` (context) | DB/external adapters            | domain + framework      | Eloquent model + a bound repository impl                |
+| `interfaces/`               | routes, controllers, DTOs       | application + framework | `routes/api.php` + Controller + Resource                |
 
 Adding a new context (say `assistant/`) = create the folder, mirror these four
 layers, add one `assistantRoutes()` mount line in `Routing.kt`. A context is
@@ -278,10 +278,10 @@ delete-able: removing the folder should break exactly one mount line.
 "Infrastructure" is a **layer name**, not a globally unique folder — it means
 "the technical, swappable details." It legitimately appears at two scopes:
 
-| Folder | Scope | Holds | Laravel analogue |
-|---|---|---|---|
-| `com/recipeapp/infrastructure/` | whole **application** | HTTP, JSON, JWT, the DB *connection*, exception mapping — cross-cutting plumbing every feature shares | `bootstrap/app.php`, `config/*.php`, providers, `Handler.php` |
-| `com/recipeapp/contexts/<name>/infrastructure/` | one **bounded context** | that feature's adapters — the Exposed table mirror + the repository implementing the domain port | a module's `models/` + bound `Repositories/Eloquent…Repository` |
+| Folder                                          | Scope                   | Holds                                                                                                 | Laravel analogue                                                |
+| ----------------------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `com/recipeapp/infrastructure/`                 | whole **application**   | HTTP, JSON, JWT, the DB _connection_, exception mapping — cross-cutting plumbing every feature shares | `bootstrap/app.php`, `config/*.php`, providers, `Handler.php`   |
+| `com/recipeapp/contexts/<name>/infrastructure/` | one **bounded context** | that feature's adapters — the Exposed table mirror + the repository implementing the domain port      | a module's `models/` + bound `Repositories/Eloquent…Repository` |
 
 Both obey the same dependency rule: infrastructure points inward to the domain;
 the domain never points back. If the shared name reads as confusing, a common
@@ -314,35 +314,35 @@ fast, deploys one artifact, and matches the one-VM pilot topology
 
 ## 7. Structure status (what's done vs. deferred)
 
-| Item | Status | Note |
-|---|---|---|
-| Package `com` → `com.recipeapp` | ✅ done | generator default replaced |
-| Flat files → DDD bounded contexts | ✅ done | `recipes/` is the reference context |
-| Handlers extracted from `Routing.kt` into `interfaces/` | ✅ done | routes → controller → use case → DTO |
-| Repository port + adapter split | ✅ done | domain owns the port, infra owns Exposed |
-| Recipe CRUD endpoints (list/get/create/update/delete) | ✅ done | under `/api/v1/recipes`; 201/400/404/204/503 |
-| Request-body DTOs + validation | ✅ done | `CreateRecipeRequest`/`UpdateRecipeRequest`; rules live in the use cases |
-| Flyway migrations | ✅ done | `V1__create_recipes_table.sql`; runs at boot (`AUTO_MIGRATE`) |
-| Local Postgres | ✅ done | `infra/docker-compose.yml` (pgvector/pg16) |
-| Dev mode + hot reload | ✅ done | `ktor.development`; the wizard staggers `run` + `-t classes` |
-| Honest DB startup logging | ✅ done | `configureDatabase()` probes, so logs match `/healthz` |
-| Global `database` val instead of injected | keep | fine at pilot scale; use cases already take the repo via constructor |
-| `anyHost()` in CORS | ⏩ fix before deploy | restrict to admin/mobile origins |
-| JWT secret | ⏩ env-var with dev fallback | production must set `JWT_SECRET` |
-| API Dockerfile (prod image) | ⏩ deferred | dev runs native; add when targeting the Oracle Cloud VM |
+| Item                                                    | Status                       | Note                                                                     |
+| ------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------ |
+| Package `com` → `com.recipeapp`                         | ✅ done                      | generator default replaced                                               |
+| Flat files → DDD bounded contexts                       | ✅ done                      | `recipes/` is the reference context                                      |
+| Handlers extracted from `Routing.kt` into `interfaces/` | ✅ done                      | routes → controller → use case → DTO                                     |
+| Repository port + adapter split                         | ✅ done                      | domain owns the port, infra owns Exposed                                 |
+| Recipe CRUD endpoints (list/get/create/update/delete)   | ✅ done                      | under `/api/v1/recipes`; 201/400/404/204/503                             |
+| Request-body DTOs + validation                          | ✅ done                      | `CreateRecipeRequest`/`UpdateRecipeRequest`; rules live in the use cases |
+| Flyway migrations                                       | ✅ done                      | `V1__create_recipes_table.sql`; runs at boot (`AUTO_MIGRATE`)            |
+| Local Postgres                                          | ✅ done                      | `infra/docker-compose.yml` (pgvector/pg16)                               |
+| Dev mode + hot reload                                   | ✅ done                      | `ktor.development`; the wizard staggers `run` + `-t classes`             |
+| Honest DB startup logging                               | ✅ done                      | `configureDatabase()` probes, so logs match `/healthz`                   |
+| Global `database` val instead of injected               | keep                         | fine at pilot scale; use cases already take the repo via constructor     |
+| `anyHost()` in CORS                                     | ⏩ fix before deploy         | restrict to admin/mobile origins                                         |
+| JWT secret                                              | ⏩ env-var with dev fallback | production must set `JWT_SECRET`                                         |
+| API Dockerfile (prod image)                             | ⏩ deferred                  | dev runs native; add when targeting the Oracle Cloud VM                  |
 
 ---
 
 ## 8. Where to put the next thing you write
 
-| You're adding... | It goes in... | Laravel instinct that's right |
-|---|---|---|
-| A new endpoint | `Routing.kt` (Stage 1) → `XRoutes.kt` (Stage 2) | `routes/api.php` |
-| A new table | a migration SQL + a mirrored `XTable` object | migration + Model pair |
-| A reusable query | function next to its table object | query scopes on the Model |
-| Request/response shape | `@Serializable data class` next to its domain | Form Request / Resource |
-| Auth requirement on a route | `authenticate { }` block wrapping routes | `->middleware('auth:sanctum')` |
-| Background work | coroutine job + `jobs` table row (SETUP later) | `dispatch(new Job)` |
+| You're adding...                              | It goes in...                                           | Laravel instinct that's right        |
+| --------------------------------------------- | ------------------------------------------------------- | ------------------------------------ |
+| A new endpoint                                | `Routing.kt` (Stage 1) → `XRoutes.kt` (Stage 2)         | `routes/api.php`                     |
+| A new table                                   | a migration SQL + a mirrored `XTable` object            | migration + Model pair               |
+| A reusable query                              | function next to its table object                       | query scopes on the Model            |
+| Request/response shape                        | `@Serializable data class` next to its domain           | Form Request / Resource              |
+| Auth requirement on a route                   | `authenticate { }` block wrapping routes                | `->middleware('auth:sanctum')`       |
+| Background work                               | coroutine job + `jobs` table row (SETUP later)          | `dispatch(new Job)`                  |
 | Framework wiring (logging format, new plugin) | a `configureX()` in a plugins file + `application.yaml` | `config/app.php` + a ServiceProvider |
 
 When in doubt: **routes → controller-ish function → query function → DTO**,
