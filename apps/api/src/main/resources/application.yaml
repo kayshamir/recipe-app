@@ -1,0 +1,15 @@
+ktor:
+  development: true
+  deployment:
+    port: 8080
+    watch:
+      - classes
+      - resources
+  application:
+    modules:
+      - com.recipeapp.infrastructure.HttpKt.configureHttp
+      - com.recipeapp.infrastructure.SerializationKt.configureSerialization
+      - com.recipeapp.infrastructure.SecurityKt.configureSecurity
+      - com.recipeapp.infrastructure.StatusPagesKt.configureStatusPages
+      - com.recipeapp.infrastructure.DatabaseKt.configureDatabase
+      - com.recipeapp.RoutingKt.configureRouting
